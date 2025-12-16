@@ -182,31 +182,53 @@ func mapAttrLines(t *testing.T, lines []string) map[string]any {
 }
 
 func TestHandler(t *testing.T) {
-	t.Run("times are written in consistent layout", func(t *testing.T) {
-		now := time.Date(2009, time.November, 9, 23, 0, 0, 0, time.UTC)
-		rec := slog.NewRecord(now, slog.LevelInfo, "msg", 0)
-		rec.AddAttrs(slog.Time("foo", now))
-		var buf bytes.Buffer
+	// now is a fixed value meant to simplify output tests. It's the same
+	// value as the time in the Go Playground.
+	now := time.Date(2009, time.November, 9, 23, 0, 0, 0, time.UTC)
 
-		err := NewHandler(&buf, nil).Handle(t.Context(), rec)
-		if err != nil {
-			t.Fatal(err)
-		}
+	testCases := []struct {
+		name  string
+		attrs []slog.Attr
+		want  string
+	}{
+		{
+			name:  "times are written in consistent layout",
+			attrs: []slog.Attr{slog.Time("foo", now)},
+			want: `23:00:00 INFO msg
+ ↳ foo: 23:00:00`},
+		{
+			name: "group indentation",
+			attrs: []slog.Attr{
+				slog.String("a", "b"),
+				slog.Group("G", slog.String("c", "d"), slog.String("e", "f")),
+				slog.String("g", "h"),
+			},
+			want: `23:00:00 INFO msg
+ ↳ a: b
+ ↳ G:
+     ↳ c: d
+     ↳ e: f
+ ↳ g: h`,
+		},
+	}
 
-		lines := buf.String()
-		t.Logf("%s", lines)
-		parsedMap := parseMap(t, strings.Split(lines, "\n"))
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := slog.NewRecord(now, slog.LevelInfo, "msg", 0)
+			rec.AddAttrs(tc.attrs...)
+			var buf bytes.Buffer
 
-		gotTime, ok := parsedMap[slog.TimeKey]
-		if !ok {
-			t.Fatalf("expected to find key %s", slog.TimeKey)
-		}
-		gotFoo, ok := parsedMap["foo"]
-		if !ok {
-			t.Fatalf("expected to find key %s", "foo")
-		}
-		if gotFoo != gotTime {
-			t.Errorf("expected for time values to be the same; got %v, expected %v", gotFoo, gotTime)
-		}
-	})
+			err := NewHandler(&buf, nil).Handle(t.Context(), rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := stripANSI(buf.String())
+			got = strings.TrimSuffix(got, "\n") // discard new line so that writing expected values is easier.
+
+			if got != tc.want {
+				t.Errorf("\ngot:  %q\nwant: %q", got, tc.want)
+			}
+		})
+	}
 }
